@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+if [ ! -d .env ]; then
+	virtualenv .env
+fi
+
+source .env/bin/activate
+pip --quiet install --requirement requirements.txt
+if [ -z "$ADMIN_TOKEN" ]; then
+	read -s -p 'Gitalb admin private_token: ' ADMIN_TOKEN
+	echo
+fi
+
+pylint -E testplan.py
+export ADMIN_TOKEN
+exec py.test --verbose --exitfirst --showlocals $@ testplan.py
