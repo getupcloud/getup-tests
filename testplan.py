@@ -7,6 +7,7 @@
 #
 
 import os
+import stat
 import json
 import shutil
 import random
@@ -21,12 +22,12 @@ from hammock import Hammock
 assert 'ADMIN_TOKEN' in os.environ, 'Must set enviroment var $ADMIN_TOKEN'
 
 CART_PHP    = 'php-5.3'
-GITLAB      = 'https://git.getupcloud.com/'
+GITLAB      = 'https://git.getupcloud.com'
 BROKER      = 'https://broker.getupcloud.com'
 ADMIN_EMAIL = 'admin@getupcloud.com'
 ADMIN_TOKEN = os.environ['ADMIN_TOKEN']
 
-USER_EMAIL  = 'getuptest@getupcloud.com'
+USER_EMAIL  = 'getuptest.{}@getupcloud.com'.format(os.getpid())
 USER_PASS   = ''.join(random.sample('abcdefghijkl0123456789', 10))
 
 USER_TOKEN  = '' # read after creation
@@ -35,17 +36,21 @@ KEY_DSA     = None
 APP         = 'testapp'
 DOMAIN      = 'testdom'
 PROJECT     = '{app}-{domain}'
-GIT_URL     = 'git@git.getupcloud.com:{project[path]}.git'
+GIT_URL     = 'git@git.getupcloud.com:{project_name}.git'
+GIT_DIR     = '{project_name}.git'
+DATA_DIR    = os.path.abspath('data-dir')
 
 gitlab      = Hammock(GITLAB)
 
 def setup_module():
-	if os.path.isdir('results'):
-		shutil.rmtree('results')
-	os.mkdir('results')
+	if os.path.isdir(DATA_DIR):
+		shutil.rmtree(DATA_DIR)
+	os.mkdir(DATA_DIR)
+
 	global KEY_RSA, KEY_DSA
 	KEY_RSA = create_rsa_key()
 	KEY_DSA = create_dsa_key()
+
 
 def teardown_module():
 	pass
@@ -112,21 +117,43 @@ def create_project(name):
 	assert project.ok, 'Error creating project: data={data}, status_code={project.status_code}, response={project.content}'.format(data=data, project=project)
 	return project.json()
 
-def clone_project(project, priv_key):
+def git(args, repo_dir='.', priv_key=None):
+	assert isinstance(args, (list, tuple))
+	assert os.path.isdir(repo_dir)
+	if priv_key is not None:
+		if isinstance(priv_key, (list, tuple)):
+			priv_key = priv_key[0]
+		assert os.path.isfile(priv_key)
+	git_ssh = os.path.join(os.path.dirname(__file__), 'git-ssh')
+	command = ['git'] + list(args)
+	assert subprocess.call(command, cwd=repo_dir, env={'GIT_SSH': git_ssh, 'PRIV_KEY': priv_key or ''}) == 0
+
+def clone_project(project_name, priv_key):
 	'''Clona projeto do gitlab.
 	'''
-	raise NotImplementedError()
+	git_url = GIT_URL.format(project_name=project_name)
+	repo_dir = os.path.join(DATA_DIR, GIT_DIR.format(project_name=project_name))
+	git(['clone', git_url, repo_dir], priv_key=priv_key)
+	assert os.path.isdir(repo_dir) and os.path.isdir(os.path.join(repo_dir, '.git'))
 
-def add_file_to_project(project, filename, content=None):
-	'''Comita arquivo no projeto. Adiciona se nao existir.
-		Sobrescreve arquivo existente.
+def add_file_to_project(project_name, filename, content=None):
+	'''Inclui arquivo no projeto, sobrescrevendo se o arquivo ja existe.
 	'''
-	raise NotImplementedError()
+	repo_dir = os.path.join(DATA_DIR, GIT_DIR.format(project_name=project_name))
+	_filename = os.path.join(repo_dir, filename)
+	is_new = not os.path.isfile(_filename)
+	with open(_filename, 'w') as f:
+		if content is not None:
+			f.write(str(content))
+	git(['add', filename], repo_dir=repo_dir)
+	log_mesg = '{mesg}: {filename}'.format(mesg='create' if is_new else 'updated', filename=filename)
+	git(['commit', '-m', log_mesg, filename], repo_dir=repo_dir)
 
-def push_project(project, priv_key):
+def push_project(project_name, priv_key):
 	'''Execute git push no projeto
 	'''
-	raise NotImplementedError()
+	repo_dir = os.path.join(DATA_DIR, GIT_DIR.format(project_name=project_name))
+	git(['push', 'origin', 'master'], repo_dir=repo_dir, priv_key=priv_key)
 
 #
 # Operacoes de usuario
@@ -159,7 +186,7 @@ def login_user(email, password): # pylint: disable=E1102
 	b.form.set_value(value=email, id='user_email')
 	b.form.set_value(value=password, id='user_password')
 	r = b.submit()      # pylint: disable=E1102
-	assert r.geturl() == GITLAB
+	assert r.geturl().rstrip('/') == GITLAB.rstrip('/')
 
 def get_user_token(email, password):
 	'''Busca private_token do usuario.
@@ -171,19 +198,18 @@ def get_user_token(email, password):
 	assert 'private_token' in session.json(), 'Session token not found (invalid user or password?)'
 	return session.json()['private_token']
 
-def _create_ssh_key(key_type, comment):
+def create_ssh_key(key_type):
 	'''Cria par de chaves ssh-{key_type} e retorna tupla (private, public).
 	'''
-	raise NotImplementedError()
-
-def create_ssh_key(key_type):
-	priv_key_filename = 'test_id_%s' % key_type
+	priv_key_filename = os.path.join(DATA_DIR, 'test_id_' + key_type)
 	pub_key_filename  = priv_key_filename + '.pub'
 	for f in [ priv_key_filename, pub_key_filename ]:
 		try: os.unlink(f)
 		except: pass
 	assert subprocess.call(['env', 'ssh-keygen', '-t', key_type, '-N', '', '-f', priv_key_filename]) == 0
 	assert os.path.isfile(priv_key_filename) and os.path.isfile(pub_key_filename)
+	for f in [ priv_key_filename, pub_key_filename ]:
+		os.chmod(f, stat.S_IRUSR | stat.S_IWUSR)
 	return priv_key_filename, pub_key_filename
 
 def create_rsa_key():
@@ -232,7 +258,7 @@ def get_accounting():
 def test_create_user():
 	'''1.1 Criacao de usuario
 	'''
-	create_user(name='Getup Cloud Test User', email=USER_EMAIL, password=USER_PASS)
+	create_user(name='Getup Cloud Test User {}'.format(os.getpid()), email=USER_EMAIL, password=USER_PASS)
 	login_user(email=USER_EMAIL, password=USER_PASS)
 
 def test_user_auth_token():
@@ -246,10 +272,11 @@ def test_user_pub_key():
 	'''
 	add_user_key('rsa-key', KEY_RSA[1])
 	add_user_key('dsa-key', KEY_DSA[1])
-	project = create_project('testuserpubkey')
-	clone_project(GIT_URL.format(project=project), KEY_DSA[1])
-	add_file_to_project(project, 'new-file.txt', 'hello world')
-	push_project(project, KEY_RSA)
+	project_name = 'testuserpubkey-{}'.format(os.getpid())
+	create_project(project_name)
+	clone_project(project_name, KEY_DSA)
+	add_file_to_project(project_name, 'README', 'hello world')
+	push_project(project_name, KEY_RSA)
 
 #
 # 2. Testes de domino
