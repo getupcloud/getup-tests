@@ -8,7 +8,9 @@
 
 import os
 import json
+import shutil
 import random
+import subprocess
 import mechanize
 from hammock import Hammock
 
@@ -25,7 +27,7 @@ ADMIN_EMAIL = 'admin@getupcloud.com'
 ADMIN_TOKEN = os.environ['ADMIN_TOKEN']
 
 USER_EMAIL  = 'getuptest@getupcloud.com'
-USER_PASS   = ''.join(random.sample('!@#$%&*()-_=+abcdefghijkl0123456789', 10))
+USER_PASS   = ''.join(random.sample('abcdefghijkl0123456789', 10))
 
 USER_TOKEN  = '' # read after creation
 KEY_RSA     = None
@@ -33,19 +35,20 @@ KEY_DSA     = None
 APP         = 'testapp'
 DOMAIN      = 'testdom'
 PROJECT     = '{app}-{domain}'
-GIT_URL     = 'git@git.getupcloud.com:{PROJECT}.git'
+GIT_URL     = 'git@git.getupcloud.com:{project[path]}.git'
 
 gitlab      = Hammock(GITLAB)
 
-'''
 def setup_module():
+	if os.path.isdir('results'):
+		shutil.rmtree('results')
+	os.mkdir('results')
 	global KEY_RSA, KEY_DSA
-	KEY_RSA = create_rsa_key(USER_EMAIL + '-rsa')
-	KEY_DSA = create_dsa_key(USER_EMAIL + '-dsa')
+	KEY_RSA = create_rsa_key()
+	KEY_DSA = create_dsa_key()
 
 def teardown_module():
 	pass
-'''
 
 #
 # Operacoes de dominio
@@ -99,10 +102,15 @@ def delete_app(name, domain, error=True):
 # Operacoes de projeto
 #
 
-def create_project(project):
+def create_project(name):
 	'''Cria projeto no gitlab.
 	'''
-	raise NotImplementedError()
+	data = json.dumps({'name': name})
+	headers = {'Content-Type': 'application/json'}
+	params = {'private_token': USER_TOKEN}
+	project = gitlab.api.v2.projects.POST(verify=False, data=data, headers=headers, params=params)
+	assert project.ok, 'Error creating project: data={data}, status_code={project.status_code}, response={project.content}'.format(data=data, project=project)
+	return project.json()
 
 def clone_project(project, priv_key):
 	'''Clona projeto do gitlab.
@@ -129,51 +137,74 @@ def create_user(name, email, password):
 		dados retornados na resposta.
 	'''
 	data = {'name': name, 'email': email, 'password': password}
-	headers = {'Private-Token': ADMIN_TOKEN}
+	headers = {
+		'Private-Token': ADMIN_TOKEN,
+		'Content-Type': 'application/json',
+	}
 	user = gitlab.api.v2.users.POST(verify=False, data=json.dumps(data), headers=headers)
-	assert user.ok, 'Error creating user: data={data}, status_code={user.status_code}'.format(data=data, user=user)
-	return user
+	assert user.ok, 'Error creating user: data={data}, status_code={user.status_code}, response={user.content}'.format(data=data, user=user)
+	return user.json()
 
 def get_user(email, password):
 	'''Busca dados de usuario.
 	'''
 	raise NotImplementedError()
 
-def login_user(email, password):
+def login_user(email, password): # pylint: disable=E1102
 	'''Realiza login no gitlab.
 	'''
 	b = mechanize.Browser()
-	b.open(GITLAB)
-	b.select_form(nr=0)
+	b.open(GITLAB)      # pylint: disable=E1102
+	b.select_form(nr=0) # pylint: disable=E1102
 	b.form.set_value(value=email, id='user_email')
 	b.form.set_value(value=password, id='user_password')
-	r = b.submit()
+	r = b.submit()      # pylint: disable=E1102
 	assert r.geturl() == GITLAB
 
 def get_user_token(email, password):
 	'''Busca private_token do usuario.
 	'''
-	raise NotImplementedError()
+	data = json.dumps({'email': email, 'password': password})
+	headers = {'Content-Type:': 'application/json'}
+	session = gitlab.api.v2.session.POST(verify=False, data=data, headers=headers)
+	assert session.ok
+	assert 'private_token' in session.json(), 'Session token not found (invalid user or password?)'
+	return session.json()['private_token']
 
 def _create_ssh_key(key_type, comment):
 	'''Cria par de chaves ssh-{key_type} e retorna tupla (private, public).
 	'''
 	raise NotImplementedError()
 
-def create_rsa_key(comment):
+def create_ssh_key(key_type):
+	priv_key_filename = 'test_id_%s' % key_type
+	pub_key_filename  = priv_key_filename + '.pub'
+	for f in [ priv_key_filename, pub_key_filename ]:
+		try: os.unlink(f)
+		except: pass
+	assert subprocess.call(['env', 'ssh-keygen', '-t', key_type, '-N', '', '-f', priv_key_filename]) == 0
+	assert os.path.isfile(priv_key_filename) and os.path.isfile(pub_key_filename)
+	return priv_key_filename, pub_key_filename
+
+def create_rsa_key():
 	'''Cria par de chaves ssh-rsa e retorna tupla (private_file, public_file).
 	'''
-	raise NotImplementedError()
+	return create_ssh_key('rsa')
 
-def create_dsa_key(comment):
+def create_dsa_key():
 	'''Cria par de chaves ssh-dsa e retorna tupla (private_file, public_file).
 	'''
-	raise NotImplementedError()
+	return create_ssh_key('dsa')
 
-def add_user_key(public_key_file):
+def add_user_key(title, public_key_file):
 	'''Insere chave publica na conta do usuario
 	'''
-	raise NotImplementedError()
+	with open(public_key_file) as key:
+		data = json.dumps({'title': title, 'key': key.read()})
+		headers = {'Content-Type:': 'application/json'}
+		params = {'private_token': USER_TOKEN}
+		session = gitlab.api.v2.user.keys.POST(verify=False, data=data, headers=headers, params=params)
+		assert session.ok
 
 #
 # Operacoes de url
@@ -201,7 +232,7 @@ def get_accounting():
 def test_create_user():
 	'''1.1 Criacao de usuario
 	'''
-	create_user(name='Test User', email=USER_EMAIL, password=USER_PASS)
+	create_user(name='Getup Cloud Test User', email=USER_EMAIL, password=USER_PASS)
 	login_user(email=USER_EMAIL, password=USER_PASS)
 
 def test_user_auth_token():
@@ -213,11 +244,10 @@ def test_user_auth_token():
 def test_user_pub_key():
 	'''1.3 Gerenciamento de chave ssh
 	'''
-	add_user_key(KEY_RSA)
-	add_user_key(KEY_DSA)
-	project = 'testuserpubkey'
-	create_project(project)
-	clone_project(project, KEY_DSA)
+	add_user_key('rsa-key', KEY_RSA[1])
+	add_user_key('dsa-key', KEY_DSA[1])
+	project = create_project('testuserpubkey')
+	clone_project(GIT_URL.format(project=project), KEY_DSA[1])
 	add_file_to_project(project, 'new-file.txt', 'hello world')
 	push_project(project, KEY_RSA)
 
