@@ -40,7 +40,8 @@ GIT_URL     = 'git@git.getupcloud.com:{project_name}.git'
 GIT_DIR     = '{project_name}.git'
 DATA_DIR    = os.path.abspath('data-dir')
 
-gitlab      = Hammock(GITLAB)
+gitlab      = Hammock(GITLAB, verify=False)
+openshift   = None
 
 def setup_module():
 	if os.path.isdir(DATA_DIR):
@@ -62,13 +63,19 @@ def teardown_module():
 def create_domain(name, error=True):
 	'''Cria um dominio. Se {error}=True, falha se dominio ja existe.
 	'''
-	raise NotImplementedError()
+	domain = openshift.broker.rest.domains.POST(data={'id': name})
+	if error:
+		assert domain.ok, 'Error creating domain {name}: {domain.status_code} {domain.reason}:\n{domain.text}'.format(**locals())
+	return domain.json if domain.ok else False
 
 def get_domain(name, error=True):
 	'''Retorna dados de dominio. Se {error}=True, falha se ocorrer um
 		erro na operacao, retornando True ou False.
 	'''
-	raise NotImplementedError()
+	domain = openshift.broker.rest.domains(name).GET(verify=False)
+	if error:
+		assert domain.ok, 'Invalid domain {name}: {domain.status_code} {domain.reason}:\n{domain.text}'.format(**locals())
+	return domain.json if domain.ok else False
 
 def update_domain(name, new_name, error=True):
 	'''Altera o nome de um dominio. Se {error}=True, falha se nao conseguir
@@ -113,9 +120,9 @@ def create_project(name):
 	data = json.dumps({'name': name})
 	headers = {'Content-Type': 'application/json'}
 	params = {'private_token': USER_TOKEN}
-	project = gitlab.api.v2.projects.POST(verify=False, data=data, headers=headers, params=params)
+	project = gitlab.api.v2.projects.POST(data=data, headers=headers, params=params)
 	assert project.ok, 'Error creating project: data={data}, status_code={project.status_code}, response={project.content}'.format(data=data, project=project)
-	return project.json()
+	return project.json
 
 def git(args, repo_dir='.', priv_key=None):
 	assert isinstance(args, (list, tuple))
@@ -168,9 +175,9 @@ def create_user(name, email, password):
 		'Private-Token': ADMIN_TOKEN,
 		'Content-Type': 'application/json',
 	}
-	user = gitlab.api.v2.users.POST(verify=False, data=json.dumps(data), headers=headers)
+	user = gitlab.api.v2.users.POST(data=json.dumps(data), headers=headers)
 	assert user.ok, 'Error creating user: data={data}, status_code={user.status_code}, response={user.content}'.format(data=data, user=user)
-	return user.json()
+	return user.json
 
 def get_user(email, password):
 	'''Busca dados de usuario.
@@ -193,10 +200,10 @@ def get_user_token(email, password):
 	'''
 	data = json.dumps({'email': email, 'password': password})
 	headers = {'Content-Type:': 'application/json'}
-	session = gitlab.api.v2.session.POST(verify=False, data=data, headers=headers)
+	session = gitlab.api.v2.session.POST(data=data, headers=headers)
 	assert session.ok
-	assert 'private_token' in session.json(), 'Session token not found (invalid user or password?)'
-	return session.json()['private_token']
+	assert 'private_token' in session.json, 'Session token not found (invalid user or password?)'
+	return session.json['private_token']
 
 def create_ssh_key(key_type):
 	'''Cria par de chaves ssh-{key_type} e retorna tupla (private, public).
@@ -229,7 +236,7 @@ def add_user_key(title, public_key_file):
 		data = json.dumps({'title': title, 'key': key.read()})
 		headers = {'Content-Type:': 'application/json'}
 		params = {'private_token': USER_TOKEN}
-		session = gitlab.api.v2.user.keys.POST(verify=False, data=data, headers=headers, params=params)
+		session = gitlab.api.v2.user.keys.POST(data=data, headers=headers, params=params)
 		assert session.ok
 
 #
@@ -264,8 +271,9 @@ def test_create_user():
 def test_user_auth_token():
 	'''1.2 Autenticacao de usuario
 	'''
-	global USER_TOKEN
+	global USER_TOKEN, openshift
 	USER_TOKEN = get_user_token(email=USER_EMAIL, password=USER_PASS)
+	openshift = Hammock(BROKER, auth=(USER_EMAIL, USER_TOKEN), verify=False)
 
 def test_user_pub_key():
 	'''1.3 Gerenciamento de chave ssh
@@ -277,6 +285,13 @@ def test_user_pub_key():
 	clone_project(project_name, KEY_DSA)
 	add_file_to_project(project_name, 'README', 'hello world')
 	push_project(project_name, KEY_RSA)
+
+def test_openshift_api_accessible():
+	'''1.4 API Openshift acessivel
+	'''
+	url = Hammock(BROKER).broker.rest.api
+	api = url.GET(verify=False)
+	assert api.ok, 'Openshift API is unaccessible: {url}: {api.status_code} {api.reason}:\n{api.text}'.format(**locals())
 
 #
 # 2. Testes de domino

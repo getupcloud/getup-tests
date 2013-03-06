@@ -71,6 +71,12 @@ Verificar se é possivel inserir e remover chaves ssh do usuario no gitlab.
 ### Clonar o projeto usando a chave rsa
 ### Incluir arquivo vazio no projeto e publicar usando chave dsa
 
+## 1.4 API Openshift acessivel
+
+Verifica se a API REST do openshift é acessivel
+
+### Acessar e validar a url $BROKER/broker/rest/api
+
 2. Testes de dominio
 --------------------
 

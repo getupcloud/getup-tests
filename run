@@ -2,11 +2,14 @@
 set -e
 
 if [ ! -d .env ]; then
+	echo 'creating virtualenv .env'
 	virtualenv .env
 fi
 
 source .env/bin/activate
+echo -n 'resolving dependencies...'
 pip --quiet install --requirement requirements.txt
+echo ' done'
 if [ -z "$ADMIN_TOKEN" ]; then
 	read -s -p 'Gitalb admin private_token: ' ADMIN_TOKEN
 	echo
