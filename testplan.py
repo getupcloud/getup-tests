@@ -273,6 +273,7 @@ def test_user_auth_token():
 	'''
 	global USER_TOKEN, openshift
 	USER_TOKEN = get_user_token(email=USER_EMAIL, password=USER_PASS)
+	# atualiza objeto openshift com dados de autenticacao
 	openshift = Hammock(BROKER, auth=(USER_EMAIL, USER_TOKEN), verify=False)
 
 def test_user_pub_key():
@@ -289,8 +290,8 @@ def test_user_pub_key():
 def test_openshift_api_accessible():
 	'''1.4 API Openshift acessivel
 	'''
-	url = Hammock(BROKER).broker.rest.api
-	api = url.GET(verify=False)
+	url = Hammock(BROKER, verify=False).broker.rest.api
+	api = url.GET()
 	assert api.ok, 'Openshift API is unaccessible: {url}: {api.status_code} {api.reason}:\n{api.text}'.format(**locals())
 
 #
