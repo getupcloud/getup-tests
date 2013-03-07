@@ -1,4 +1,6 @@
 distribute==0.6.24
 hammock==0.2.3
 mechanize==0.2.5
+py==1.4.13
+pytest==2.3.4
 requests==0.14.2

@@ -15,6 +15,6 @@ if [ -z "$ADMIN_TOKEN" ]; then
 	echo
 fi
 
-pylint -E testplan.py
+pylint -E -f colorized --include-ids=y test_plan.py
 export ADMIN_TOKEN
-exec py.test --verbose --exitfirst --showlocals $@ testplan.py
+exec py.test --verbose --exitfirst --showlocals $@ test_plan.py
