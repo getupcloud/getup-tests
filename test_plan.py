@@ -110,21 +110,24 @@ def delete_domain(name, force=False, error=True):
 # Operacoes de aplicacao
 #
 
-def create_app(name, domain, carts, scale=False):
+def create_app(name, domain, carts, scale=False, initial_git_url=None):
 	'''Cria uma aplicacao. Se {name} for falso, gera um nome aleatorio.
 		Falha se ocorrer um erro na operacao.
 	'''
 	if not name:
 		name = '{prefix}{suffix}'.format(prefix=APP, suffix=''.join(random.sample('abcdefghijkl0123456789', 4)))
+
+	try: domain = domain.id
+	except AttributeError: domain = domain['data']['id']
+	except (KeyError, TypeError): pass
+
 	data = { 'name': name, 'scale': scale }
 	if isinstance(carts, (list, tuple)):
 		data['cartridges'] = carts
 	else:
 		data['cartridge'] = carts
-
-	# usa apenas o id se for um objeto ScopedDomain()
-	try: domain = domain.id
-	except AttributeError: pass
+	if initial_git_url:
+		data['initial_git_url'] = initial_git_url
 
 	app = openshift.broker.rest.domains(domain).applications.POST(data=data)
 	assert app.ok, 'Erro creating app {name}: {app.status_code} {app.reason}:\n{app.text}'.format(**locals())
@@ -141,9 +144,11 @@ def delete_app(name, domain, error=True):
 		True ou False neste caso.
 	'''
 	try: name = name['data']['name']
-	except KeyError: pass
+	except (KeyError, TypeError): pass
+
 	try: domain = domain.id
-	except AttributeError: pass
+	except AttributeError: domain = domain['data']['id']
+	except (KeyError, TypeError): pass
 
 	response = openshift.broker.rest.domains(domain).applications(name).DELETE()
 	if error:
@@ -298,7 +303,7 @@ def check_url_status(url, status_code, content=None, **kva):
 		se informado, seu conteud.
 	'''
 	try: url = url['data']['app_url']
-	except KeyError: pass
+	except (KeyError, TypeError): pass
 
 	response = get_url(url, **kva)
 	assert response.status_code == status_code, 'Invalid URL status'
@@ -452,10 +457,25 @@ class TestApp:
 	def test_create_app_simple_prod(self, scoped_domain):
 		'''3.1 Criacao de aplicacao simples (producao)
 		'''
-		app = create_app(None, scoped_domain.id, CART_PHP)
+		app = create_app(None, scoped_domain, CART_PHP)
 		last_accounted('create-app')
 		project = PROJECT.format(app=app['data']['name'], domain=scoped_domain.id)
 		clone_project(project, KEY_RSA)
 		add_file_to_project(project, 'php/new-file.txt', 'hello world')
 		push_project(project, KEY_RSA)
 		check_url_status(app['data']['app_url'] + '/new-file.txt', status_code=200, content='hello world')
+
+	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
+	def test_remove_app_prod(self, scoped_domain):
+		'''3.2 Remocao de aplicacao (producao)
+		'''
+		app = create_app(None, scoped_domain, CART_PHP)
+		last_accounted('create-app')
+		check_url_status(app, status_code=200)
+		delete_app(app, scoped_domain)
+		last_accounted('delete-app')
+		try:
+			check_url_status(app, status_code=200)
+			assert not 'Aplicao removida continua respondendo requisicao.'
+		except AssertionError:
+			pass
