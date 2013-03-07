@@ -10,9 +10,12 @@ import os
 import stat
 import json
 import shutil
+import pytest
 import random
-import subprocess
+import requests
 import mechanize
+import subprocess
+from functools import wraps
 from hammock import Hammock
 
 #
@@ -34,7 +37,7 @@ USER_TOKEN  = '' # read after creation
 KEY_RSA     = None
 KEY_DSA     = None
 APP         = 'testapp'
-DOMAIN      = 'testdom'
+DOMAIN      = 'testdom{}'.format(os.getpid())
 PROJECT     = '{app}-{domain}'
 GIT_URL     = 'git@git.getupcloud.com:{project_name}.git'
 GIT_DIR     = '{project_name}.git'
@@ -72,7 +75,7 @@ def get_domain(name, error=True):
 	'''Retorna dados de dominio. Se {error}=True, falha se ocorrer um
 		erro na operacao, retornando True ou False.
 	'''
-	domain = openshift.broker.rest.domains(name).GET(verify=False)
+	domain = openshift.broker.rest.domains(name).GET()
 	if error:
 		assert domain.ok, 'Invalid domain {name}: {domain.status_code} {domain.reason}:\n{domain.text}'.format(**locals())
 	return domain.json if domain.ok else False
@@ -81,13 +84,16 @@ def update_domain(name, new_name, error=True):
 	'''Altera o nome de um dominio. Se {error}=True, falha se nao conseguir
 	renomear, retornando True ou False.
 	'''
-	raise NotImplementedError()
+	domain = openshift.broker.rest.domains(name).PUT(data={'id': new_name})
+	if error:
+		assert domain.ok, 'Invalid domain {name}: {domain.status_code} {domain.reason}:\n{domain.text}'.format(**locals())
+	return domain.json if domain.ok else False
 
 def delete_domain(name, force=False, error=True):
 	'''Remove um dominio. Se {error}=True, falha se nao conseguir
 	remover, retornando True ou False.
 	'''
-	raise NotImplementedError()
+	openshift.broker.rest.domains(name).DELETE(data={'force': str(force).lower()})
 
 #
 # Operacoes de aplicacao
@@ -96,7 +102,14 @@ def delete_domain(name, force=False, error=True):
 def create_app(name, domain, carts, scale=False):
 	'''Cria uma aplicacao. Falha se ocorrer um erro na operacao.
 	'''
-	raise NotImplementedError()
+	data = { 'name': name, 'scale': scale }
+	if isinstance(carts, (list, tuple)):
+		data['cartridges'] = carts
+	else:
+		data['cartridge'] = carts
+	app = openshift.broker.rest.domains(domain).applications.POST(data=data)
+	assert app.ok, 'Erro creating app {name}: {app.status_code} {app.reason}:\n{app.text}'.format(**locals())
+	return app.json
 
 def get_app(name, domain):
 	'''Retorna dados de uma aplicacao. Falha se aplicacao nao existir.
@@ -184,15 +197,15 @@ def get_user(email, password):
 	'''
 	raise NotImplementedError()
 
-def login_user(email, password): # pylint: disable=E1102
+def login_user(email, password):
 	'''Realiza login no gitlab.
 	'''
 	b = mechanize.Browser()
-	b.open(GITLAB)      # pylint: disable=E1102
+	b.open(GITLAB) # pylint: disable=E1102
 	b.select_form(nr=0) # pylint: disable=E1102
 	b.form.set_value(value=email, id='user_email')
 	b.form.set_value(value=password, id='user_password')
-	r = b.submit()      # pylint: disable=E1102
+	r = b.submit() # pylint: disable=E1102
 	assert r.geturl().rstrip('/') == GITLAB.rstrip('/')
 
 def get_user_token(email, password):
@@ -244,16 +257,17 @@ def add_user_key(title, public_key_file):
 #
 
 def get_url(url):
-	raise NotImplementedError()
+	return requests.get(url)
 
 def get_url_status(url):
-	raise NotImplementedError()
+	return get_url(url).status_code
 
 #
 # Operacoes de accouting
 #
-def get_accounting():
-	raise NotImplementedError()
+def last_accounted(last_entry):
+	# XXX: MOCK
+	return True
 
 ################################################################################
 ################################################################################
@@ -262,97 +276,131 @@ def get_accounting():
 # 1. Testes de usuario
 #
 
-def test_create_user():
-	'''1.1 Criacao de usuario
-	'''
-	create_user(name='Getup Cloud Test User {}'.format(os.getpid()), email=USER_EMAIL, password=USER_PASS)
-	login_user(email=USER_EMAIL, password=USER_PASS)
+class TestUsers:
+	def test_create_user(self):
+		'''1.1 Criacao de usuario
+		'''
+		create_user(name='Getup Cloud Test User {}'.format(os.getpid()), email=USER_EMAIL, password=USER_PASS)
+		login_user(email=USER_EMAIL, password=USER_PASS)
 
-def test_user_auth_token():
-	'''1.2 Autenticacao de usuario
-	'''
-	global USER_TOKEN, openshift
-	USER_TOKEN = get_user_token(email=USER_EMAIL, password=USER_PASS)
-	# atualiza objeto openshift com dados de autenticacao
-	openshift = Hammock(BROKER, auth=(USER_EMAIL, USER_TOKEN), verify=False)
+	def test_user_auth_token(self):
+		'''1.2 Autenticacao de usuario
+		'''
+		global USER_TOKEN, openshift
+		USER_TOKEN = get_user_token(email=USER_EMAIL, password=USER_PASS)
+		# atualiza objeto openshift com dados de autenticacao
+		openshift = Hammock(BROKER, auth=(USER_EMAIL, USER_TOKEN), verify=False)
 
-def test_user_pub_key():
-	'''1.3 Gerenciamento de chave ssh
-	'''
-	add_user_key('rsa-key', KEY_RSA[1])
-	add_user_key('dsa-key', KEY_DSA[1])
-	project_name = 'testuserpubkey-{}'.format(os.getpid())
-	create_project(project_name)
-	clone_project(project_name, KEY_DSA)
-	add_file_to_project(project_name, 'README', 'hello world')
-	push_project(project_name, KEY_RSA)
+	def test_user_pub_key(self):
+		'''1.3 Gerenciamento de chave ssh
+		'''
+		add_user_key('rsa-key', KEY_RSA[1])
+		add_user_key('dsa-key', KEY_DSA[1])
+		project_name = 'testuserpubkey-{}'.format(os.getpid())
+		create_project(project_name)
+		clone_project(project_name, KEY_DSA)
+		add_file_to_project(project_name, 'README', 'hello world')
+		push_project(project_name, KEY_RSA)
 
-def test_openshift_api_accessible():
-	'''1.4 API Openshift acessivel
-	'''
-	url = Hammock(BROKER, verify=False).broker.rest.api
-	api = url.GET()
-	assert api.ok, 'Openshift API is unaccessible: {url}: {api.status_code} {api.reason}:\n{api.text}'.format(**locals())
+class TestBroker:
+	def test_api_accessible(self):
+		'''1.4 API Openshift acessivel
+		'''
+		url = Hammock(BROKER, verify=False).broker.rest.api
+		api = url.GET()
+		assert api.ok, 'Openshift API is unaccessible: {url}: {api.status_code} {api.reason}:\n{api.text}'.format(**locals())
 
 #
 # 2. Testes de domino
 #
-
-def test_create_domain():
-	'''2.1. Criacao de dominio
+@pytest.fixture                    # pylint: disable=E1101
+def scoped_domain(request):
+	'''Cria um dominio exclusivo para o teste.
+		Os atributos do dominio (response['data][*]) podem ser acessados
+		como propriedades da instancia. Ex: domain.id == 'mydomain'.
+		Para acessar a resposta completa, use scoped_domain.domain['data'|'status'|...]
 	'''
-	assert not get_domain(DOMAIN, error=False)
-	create_domain(DOMAIN)
-	get_domain(DOMAIN, error=False)
+	class ScopedDomain:
+		def __init__(self):
+			self.name = ''.join(random.sample('abcdefghijklmnopqrwstuvwxyz', 8))
+			self.domain = None
+		def create(self):
+			self.domain = create_domain(self.name)
+		def delete(self):
+			return delete_domain(self.name, force=True)
+		def __getitem__(self, name):
+			return self.domain[name]
+		def __getattr__(self, name):
+			try:
+				return self['data'][name]
+			except:
+				raise AttributeError('\'{klass}\' object has no attribute \'{name}\''.format(klass=self.__class__.__name__, name=name))
+	sd = ScopedDomain()
+	print '***', sd.create()
+	request.addfinalizer(sd.delete)
+	return sd
 
-def test_update_domain():
-	'''2.2. Alteracao de dominio
-	'''
-	app_a = create_app(APP, DOMAIN, CART_PHP)
-	assert get_url_status(app_a['data']['url']) == 200
-	update_domain(DOMAIN, DOMAIN + 'new')
-	app_b = get_app(APP, DOMAIN + 'new')
-	assert app_a['data']['url'] != app_b['data']['url']
-	assert get_url_status(app_b['data']['url']) == 200
-	assert get_accounting()[-1] == 'update-dom'
-	update_domain(DOMAIN + 'new', DOMAIN)
-	app_c = get_app(APP, DOMAIN)
-	assert app_a['data']['url'] == app_c['data']['url']
-	assert get_url_status(app_c['data']['url']) == 200
-	assert get_accounting()[-1] == 'update-dom'
+#@pytest.fixture                    # pylint: disable=E1101
+#def domain(request, scoped_domain):
+#	print '***', scoped_domain.create()
+#	request.addfinalizer(scoped_domain.delete)
 
-def test_remove_empty_domain():
-	'''2.3 Remocao de dominio vazio
-	'''
-	if get_domain(DOMAIN, error=False):
-		delete_domain(DOMAIN, force=True, error=False)
-		assert get_accounting()[-1] == 'delete-dom'
-	dom = create_domain(DOMAIN)
-	assert get_accounting()[-1] == 'create-dom'
-	create_app(APP, DOMAIN, CART_PHP)
-	assert get_accounting()[-1] == 'create-app'
-	assert not delete_domain(DOMAIN, force=False, error=False)
-	delete_app(APP, DOMAIN)
-	assert get_accounting()[-1] == 'delete-app'
-	delete_domain(DOMAIN, force=False)
-	assert get_accounting()[-1] == 'delete-dom'
-	assert get_url_status(dom['data']['links']['GET']['href']) == 404
+class TestDomain:                  # pylint: disable=E1101
+	def test_create_domain(self):
+		'''2.1. Criacao de dominio
+		'''
+		name = ''.join(random.sample('abcdefghijklmnopqrwstuvwxyz', 8))
+		assert not get_domain(name, error=False)
+		try:
+			print '+++', create_domain(name)
+			get_domain(name)
+		finally:
+			delete_domain(name)
 
-def test_remove_busy_domain():
-	'''2.4 Remocao de dominio ocupado
-	'''
-	if get_domain(DOMAIN, error=False):
-		delete_domain(DOMAIN, force=True, error=False)
-		assert get_accounting()[-1] == 'delete-dom'
-	dom = create_domain(DOMAIN)
-	assert get_accounting()[-1] == 'create-dom'
-	create_app(APP, DOMAIN, CART_PHP)
-	assert get_accounting()[-1] == 'create-app'
-	assert not delete_domain(DOMAIN, force=False, error=False)
-	assert get_accounting()[-1] != 'delete-dom'
-	assert delete_domain(DOMAIN, force=True)
-	assert get_accounting()[-1] == 'delete-dom'
-	assert get_url_status(dom['data']['links']['GET']['href']) == 404
+	@pytest.mark.usefixtures('scoped_domain')
+	def test_update_domain(self, scoped_domain):
+		'''2.2. Alteracao de dominio
+		'''
+		new_domain =  scoped_domain.id[1:-1]
+		update = False
+		try:
+			update_domain(scoped_domain.id, new_domain)
+			update = True
+			assert last_accounted('update-dom')
+			assert get_domain(new_domain)
+		finally:
+			if update:
+				update_domain(new_domain, scoped_domain['data']['id'])
+
+	@pytest.mark.usefixtures('scoped_domain')
+	def test_remove_empty_domain(self, scoped_domain):
+		'''2.3 Remocao de dominio vazio
+		'''
+		domain_id = scoped_domain['data']['id']
+		create_app(APP, domain_id, CART_PHP)
+		assert last_accounted('create-app')
+		assert not delete_domain(domain_id, force=False, error=False)
+		delete_app(APP, domain_id)
+		assert last_accounted('delete-app')
+		delete_domain(domain_id, force=False)
+		assert last_accounted('delete-dom')
+		assert get_url_status(scoped_domain['data']['links']['GET']['href']) == 404
+
+	def test_remove_busy_domain(self):
+		'''2.4 Remocao de dominio ocupado
+		'''
+		if get_domain(DOMAIN, error=False):
+			delete_domain(DOMAIN, force=True, error=False)
+			assert last_accounted('delete-dom')
+		dom = create_domain(DOMAIN)
+		assert last_accounted('create-dom')
+		create_app(APP, DOMAIN, CART_PHP)
+		assert last_accounted('create-app')
+		assert not delete_domain(DOMAIN, force=False, error=False)
+		assert last_accounted('delete-dom')
+		assert delete_domain(DOMAIN, force=True)
+		assert last_accounted('delete-dom')
+		assert get_url_status(dom['data']['links']['GET']['href']) == 404
 
 #
 # 3. Gerenciamento de aplicacao
@@ -363,7 +411,7 @@ def test_create_app_simple_prod():
 	'''
 	create_domain(DOMAIN)
 	app = create_app(APP, DOMAIN, CART_PHP)
-	assert get_accounting()[-1] == 'create-app'
+	assert last_accounted('create-app')
 	clone_project(PROJECT, KEY_RSA)
 	add_file_to_project(PROJECT, 'php/new-file.txt', 'hello world')
 	push_project(PROJECT, KEY_RSA)
