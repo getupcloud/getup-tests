@@ -140,7 +140,8 @@ def delete_app(name, domain, error=True):
 		nao existir ou ocorrer um error na operacao, retornando
 		True ou False neste caso.
 	'''
-	# usa apenas o id se for um objeto ScopedDomain()
+	try: name = name['data']['name']
+	except KeyError: pass
 	try: domain = domain.id
 	except AttributeError: pass
 
@@ -283,10 +284,26 @@ def add_user_key(title, public_key_file):
 #
 
 def get_url(url, **kva):
+	'''Retorna a resposta de uma requisicao HTTP para uma URL.
+	'''
 	return requests.get(url, verify=False, **kva)
 
 def get_url_status(url, **kva):
+	'''Retorna o status HTTP de uma URL.
+	'''
 	return get_url(url, **kva).status_code
+
+def check_url_status(url, status_code, content=None, **kva):
+	'''Verifica se uma URL esta online. Testa o status_code da resposta e,
+		se informado, seu conteud.
+	'''
+	try: url = url['data']['app_url']
+	except KeyError: pass
+
+	response = get_url(url, **kva)
+	assert response.status_code == status_code, 'Invalid URL status'
+	if content is not None:
+		assert response.text == content, 'Invalid URL status'
 
 #
 # Operacoes de accouting
@@ -441,6 +458,4 @@ class TestApp:
 		clone_project(project, KEY_RSA)
 		add_file_to_project(project, 'php/new-file.txt', 'hello world')
 		push_project(project, KEY_RSA)
-		res = get_url(app['data']['app_url'] + '/new-file.txt')
-		assert res.status_code == 200
-		assert res.content == 'hello world'
+		check_url_status(app['data']['app_url'] + '/new-file.txt', status_code=200, content='hello world')
