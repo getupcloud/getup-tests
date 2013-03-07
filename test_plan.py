@@ -24,7 +24,6 @@ from hammock import Hammock
 
 assert 'ADMIN_TOKEN' in os.environ, 'Must set enviroment var $ADMIN_TOKEN'
 
-CART_PHP    = 'php-5.3'
 GITLAB      = 'https://git.getupcloud.com'
 BROKER      = 'https://broker.getupcloud.com'
 ADMIN_EMAIL = 'admin@getupcloud.com'
@@ -42,6 +41,9 @@ PROJECT     = '{app}-{domain}'
 GIT_URL     = 'git@git.getupcloud.com:{project_name}.git'
 GIT_DIR     = '{project_name}.git'
 DATA_DIR    = os.path.abspath('data-dir')
+
+CART_PHP    = 'php-5.3'
+REPO_WORDPRESS = 'https://github.com/openshift/wordpress-example'
 
 gitlab      = Hammock(GITLAB, verify=False)
 openshift   = None
@@ -479,3 +481,13 @@ class TestApp:
 			assert not 'Aplicao removida continua respondendo requisicao.'
 		except AssertionError:
 			pass
+
+	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
+	def test_create_app_simple_prod_init_repo(self, scoped_domain):
+		'''3.3 Criacao de aplicacao simples com repositorio inicial (producao)
+		'''
+		app = create_app(name=None, domain=scoped_domain, carts=CART_PHP, initial_git_url=REPO_WORDPRESS)
+		last_accounted('create-app')
+		project = PROJECT.format(app=app['data']['name'], domain=scoped_domain.id)
+		clone_project(project, KEY_RSA)
+
