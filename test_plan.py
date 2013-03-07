@@ -8,6 +8,7 @@
 
 import os
 import stat
+import time
 import json
 import shutil
 import pytest
@@ -300,17 +301,27 @@ def get_url_status(url, **kva):
 	'''
 	return get_url(url, **kva).status_code
 
-def check_url_status(url, status_code, content=None, **kva):
-	'''Verifica se uma URL esta online. Testa o status_code da resposta e,
-		se informado, seu conteud.
+def check_app_url_status(url, status_code=None, content=None, **kva):
+	'''Verifica se uma URL esta online. Testa o status_code da resposta e
+		o conteudo caso informado.
 	'''
 	try: url = url['data']['app_url']
 	except (KeyError, TypeError): pass
 
-	response = get_url(url, **kva)
-	assert response.status_code == status_code, 'Invalid URL status'
-	if content is not None:
-		assert response.text == content, 'Invalid URL status'
+	for retry in range(12):
+		response = get_url(url, **kva)
+
+		if response.status_code == 503:
+			# Service Unavailable (app subindo ou reiniciando)
+			time.sleep(5)
+			continue
+
+		if status_code:
+			assert response.status_code == status_code, 'Invalid URL status: %i != %i' % (response.status_code, status_code)
+		else:
+			assert response.ok, 'Invalid URL status: %i' % response.status_code
+		if content is not None:
+			assert response.text == content, 'Invalid URL status'
 
 #
 # Operacoes de accouting
@@ -465,7 +476,7 @@ class TestApp:
 		clone_project(project, KEY_RSA)
 		add_file_to_project(project, 'php/new-file.txt', 'hello world')
 		push_project(project, KEY_RSA)
-		check_url_status(app['data']['app_url'] + '/new-file.txt', status_code=200, content='hello world')
+		check_app_url_status(app['data']['app_url'] + '/new-file.txt', status_code=200, content='hello world')
 
 	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
 	def test_remove_app_prod(self, scoped_domain):
@@ -473,12 +484,12 @@ class TestApp:
 		'''
 		app = create_app(None, scoped_domain, CART_PHP)
 		last_accounted('create-app')
-		check_url_status(app, status_code=200)
+		check_app_url_status(app, status_code=200)
 		delete_app(app, scoped_domain)
 		last_accounted('delete-app')
 		try:
-			check_url_status(app, status_code=200)
-			assert not 'Aplicao removida continua respondendo requisicao.'
+			check_app_url_status(app, status_code=200)
+			assert not 'Aplicacao foi removida mas continua respondendo.'
 		except AssertionError:
 			pass
 
@@ -488,6 +499,5 @@ class TestApp:
 		'''
 		app = create_app(name=None, domain=scoped_domain, carts=CART_PHP, initial_git_url=REPO_WORDPRESS)
 		last_accounted('create-app')
-		project = PROJECT.format(app=app['data']['name'], domain=scoped_domain.id)
-		clone_project(project, KEY_RSA)
+		check_app_url_status(app['data']['app_url'].rstrip('/') + '/wp-config.php')
 
