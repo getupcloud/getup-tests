@@ -36,7 +36,7 @@ USER_PASS   = ''.join(random.sample('abcdefghijkl0123456789', 10))
 USER_TOKEN  = '' # read after creation
 KEY_RSA     = None
 KEY_DSA     = None
-APP         = 'testapp'
+APP         = 'tstapp'
 DOMAIN      = 'testdom{}'.format(os.getpid())
 PROJECT     = '{app}-{domain}'
 GIT_URL     = 'git@git.getupcloud.com:{project_name}.git'
@@ -84,6 +84,10 @@ def update_domain(name, new_name, error=True):
 	'''Altera o nome de um dominio. Se {error}=True, falha se nao conseguir
 	renomear, retornando True ou False.
 	'''
+	# usa apenas o id se for um objeto ScopedDomain()
+	try: name = name.id
+	except AttributeError: pass
+
 	domain = openshift.broker.rest.domains(name).PUT(data={'id': new_name})
 	if error:
 		assert domain.ok, 'Invalid domain {name}: {domain.status_code} {domain.reason}:\n{domain.text}'.format(**locals())
@@ -93,6 +97,10 @@ def delete_domain(name, force=False, error=True):
 	'''Remove um dominio. Se {error}=True, falha se nao conseguir
 	remover, retornando True ou False.
 	'''
+	# usa apenas o id se for um objeto ScopedDomain()
+	try: name = name.id
+	except AttributeError: pass
+
 	response = openshift.broker.rest.domains(name).DELETE(data={'force': str(force).lower()})
 	if error:
 		assert response.ok, 'Error deleting domain {name}: {response.status_code} {response.reason}:\n{response.text}'.format(**locals())
@@ -103,13 +111,21 @@ def delete_domain(name, force=False, error=True):
 #
 
 def create_app(name, domain, carts, scale=False):
-	'''Cria uma aplicacao. Falha se ocorrer um erro na operacao.
+	'''Cria uma aplicacao. Se {name} for falso, gera um nome aleatorio.
+		Falha se ocorrer um erro na operacao.
 	'''
+	if not name:
+		name = '{prefix}{suffix}'.format(prefix=APP, suffix=''.join(random.sample('abcdefghijkl0123456789', 4)))
 	data = { 'name': name, 'scale': scale }
 	if isinstance(carts, (list, tuple)):
 		data['cartridges'] = carts
 	else:
 		data['cartridge'] = carts
+
+	# usa apenas o id se for um objeto ScopedDomain()
+	try: domain = domain.id
+	except AttributeError: pass
+
 	app = openshift.broker.rest.domains(domain).applications.POST(data=data)
 	assert app.ok, 'Erro creating app {name}: {app.status_code} {app.reason}:\n{app.text}'.format(**locals())
 	return app.json
@@ -124,6 +140,10 @@ def delete_app(name, domain, error=True):
 		nao existir ou ocorrer um error na operacao, retornando
 		True ou False neste caso.
 	'''
+	# usa apenas o id se for um objeto ScopedDomain()
+	try: domain = domain.id
+	except AttributeError: pass
+
 	response = openshift.broker.rest.domains(domain).applications(name).DELETE()
 	if error:
 		assert response.ok, 'Error deleting app {name}: {response.status_code} {response.reason}:\n{response.text}'.format(**locals())
@@ -353,7 +373,7 @@ def scoped_domain(request):
 	request.addfinalizer(sd.delete)
 	return sd
 
-class TestDomain:                  # pylint: disable=E1101
+class TestDomain:
 	def test_create_remove_new_domain(self):
 		'''2.1. Criacao e remocao de dominio novo
 		'''
@@ -365,7 +385,7 @@ class TestDomain:                  # pylint: disable=E1101
 		finally:
 			delete_domain(name)
 
-	@pytest.mark.usefixtures('scoped_domain')
+	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
 	def test_update_domain(self, scoped_domain):
 		'''2.2. Alteracao de dominio
 		'''
@@ -380,50 +400,47 @@ class TestDomain:                  # pylint: disable=E1101
 			if update:
 				update_domain(new_domain, scoped_domain['data']['id'])
 
-	@pytest.mark.usefixtures('scoped_domain')
+	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
 	def test_remove_emptied_domain(self, scoped_domain):
 		'''2.3 Remocao de dominio esvasiado
 		'''
-		domain_id = scoped_domain['data']['id']
-		create_app(APP, domain_id, CART_PHP)
+		app = create_app(None, scoped_domain, CART_PHP)
 		last_accounted('create-app')
-		assert not delete_domain(domain_id, force=False, error=False)
-		delete_app(APP, domain_id)
+		assert not delete_domain(scoped_domain, force=False, error=False)
+		delete_app(app['data']['name'], scoped_domain)
 		last_accounted('delete-app')
-		delete_domain(domain_id, force=False)
+		delete_domain(scoped_domain, force=False)
 		scoped_domain.deleted = True
 		last_accounted('delete-dom')
-		assert get_url_status(scoped_domain['data']['links']['GET']['href'], auth=(USER_EMAIL, USER_TOKEN)) == 404
+		assert get_url_status(scoped_domain.links['GET']['href'], auth=(USER_EMAIL, USER_TOKEN)) == 404
 
-	def test_remove_busy_domain(self):
+	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
+	def test_remove_busy_domain(self, scoped_domain):
 		'''2.4 Remocao de dominio ocupado
 		'''
-		if get_domain(DOMAIN, error=False):
-			delete_domain(DOMAIN, force=True, error=False)
-			last_accounted('delete-dom')
-		dom = create_domain(DOMAIN)
-		last_accounted('create-dom')
-		create_app(APP, DOMAIN, CART_PHP)
+		create_app(None, scoped_domain, CART_PHP)
 		last_accounted('create-app')
-		assert not delete_domain(DOMAIN, force=False, error=False)
+		assert not delete_domain(scoped_domain, force=False, error=False)
+		delete_domain(scoped_domain, force=True)
 		last_accounted('delete-dom')
-		delete_domain(DOMAIN, force=True)
-		last_accounted('delete-dom')
-		assert get_url_status(dom['data']['links']['GET']['href'], auth=(USER_EMAIL, USER_TOKEN)) == 404
+		scoped_domain.deleted = True
+		assert get_url_status(scoped_domain.links['GET']['href'], auth=(USER_EMAIL, USER_TOKEN)) == 404
 
 #
 # 3. Gerenciamento de aplicacao
 #
 
-def test_create_app_simple_prod():
-	'''3.1 Criacao de aplicacao simples (producao)
-	'''
-	create_domain(DOMAIN)
-	app = create_app(APP, DOMAIN, CART_PHP)
-	last_accounted('create-app')
-	clone_project(PROJECT, KEY_RSA)
-	add_file_to_project(PROJECT, 'php/new-file.txt', 'hello world')
-	push_project(PROJECT, KEY_RSA)
-	res = get_url(app['data']['app_url'] + '/new-file.txt')
-	assert res.status_code == 200
-	assert res.content == 'hello world'
+class TestApp:
+	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
+	def test_create_app_simple_prod(self, scoped_domain):
+		'''3.1 Criacao de aplicacao simples (producao)
+		'''
+		app = create_app(None, scoped_domain.id, CART_PHP)
+		last_accounted('create-app')
+		project = PROJECT.format(app=app['data']['name'], domain=scoped_domain.id)
+		clone_project(project, KEY_RSA)
+		add_file_to_project(project, 'php/new-file.txt', 'hello world')
+		push_project(project, KEY_RSA)
+		res = get_url(app['data']['app_url'] + '/new-file.txt')
+		assert res.status_code == 200
+		assert res.content == 'hello world'
