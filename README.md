@@ -170,7 +170,7 @@ Verificar se é possivel criar uma aplicacao.
 ### Publicar novo arquivo na aplicacao
 ### Verificar estado da aplicacao
 
-## 3.1 Remocao de aplicacao (producao)
+## 3.2 Remocao de aplicacao (producao)
 
 Verificar se é possivel remover uma aplicacao.
 
@@ -181,7 +181,7 @@ Verificar se é possivel remover uma aplicacao.
 ### Verificar account 'delete-app'
 ### Verificar se URL da aplicacao deixa de responder
 
-## 3.2 Criacao de aplicacao simples com repositorio inicial (producao)
+## 3.3 Criacao de aplicacao simples com repositorio inicial (producao)
 
 Verificar se é possivel criar uma aplicacao, utilizando o codigo de um repositorio existente.
 
@@ -191,7 +191,7 @@ Verificar se é possivel criar uma aplicacao, utilizando o codigo de um reposito
 ### Publicar novo arquivo na aplicacao
 ### Verificar estado da aplicacao
 
-## 3.3 Criacao de aplicacao composta (producao)
+## 3.4 Criacao de aplicacao composta (producao)
 
 Verificar se é possivel criar uma aplicacao com mais de um gear.
 
@@ -201,7 +201,7 @@ Verificar se é possivel criar uma aplicacao com mais de um gear.
 ### Publicar arquivo de teste de gear (test.php)
 ### Verificar estado da aplicacao
 
-## 3.4 Criacao de aplicacao composta com repositorio inicial (producao)
+## 3.5 Criacao de aplicacao composta com repositorio inicial (producao)
 
 Verificar se é possivel criar uma aplicacao com mais de um gear, utilizando o codigo de um repositorio existente.
 
@@ -209,7 +209,7 @@ Verificar se é possivel criar uma aplicacao com mais de um gear, utilizando o c
 ### Verificar account 'create-app' (todos os gears devem aparecer)
 ### Verificar estado da aplicacao (manual)
 
-## 3.5 Criacao de aplicacao simples multi-branch (desenvolvimento)
+## 3.6 Criacao de aplicacao simples multi-branch (desenvolvimento)
 
 Verificar se é possivel criar uma aplicacao com gear de desenvolvimento.
 
@@ -222,7 +222,7 @@ Verificar se é possivel criar uma aplicacao com gear de desenvolvimento.
 ### Publicar branches de desenvolvimento
 ### Verificar URLs dos branches
 
-## 3.6 Remoção de branch (desenvolvimento)
+## 3.7 Remoção de branch (desenvolvimento)
 
 Verificar se é possivel remover um branch do gear de desenvolvimento.
 
@@ -238,7 +238,7 @@ Verificar se é possivel remover um branch do gear de desenvolvimento.
 ### Verificar URL do branch removido
 ### Verificar URLs dos branches restantes
 
-## 3.7 Criacao de aplicacao composta multi-branch (desenvolvimento)
+## 3.8 Criacao de aplicacao composta multi-branch (desenvolvimento)
 
 Verificar se é possivel criar uma aplicacao de desenvolvimento com mais de um gear.
 
@@ -251,7 +251,7 @@ Verificar se é possivel criar uma aplicacao de desenvolvimento com mais de um g
 ### Publicar branches de desenvolvimento
 ### Verificar URLs dos branches
 
-## 3.8 Criacao de aplicacao composta multi-branch com repositorio inicial (desenvolvimento)
+## 3.9 Criacao de aplicacao composta multi-branch com repositorio inicial (desenvolvimento)
 
 Verificar se é possivel criar uma aplicacao de desenvolvimento com mais de um gear, utilizando o codigo de um repositorio existente.
 
@@ -265,7 +265,7 @@ Verificar se é possivel criar uma aplicacao de desenvolvimento com mais de um g
 ### Verificar estado da aplicacao (manual)
 ### Verificar URLs dos branches (manual)
 
-## 3.9 Inclusao e exclusao de gears para aplicacao simples
+## 3.10 Inclusao e exclusao de gears para aplicacao simples
 
 Verificar se é possivel incluir e remover gears em uma aplicacao existente.
 
