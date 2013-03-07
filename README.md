@@ -87,9 +87,9 @@ Dependencias:
 - Usuario `$USER_EMAIL` deve existir
 - Dominio `$DOMAIN` nao pode existir
 
-## 2.1. Criacao de dominio
+## 2.1. Criacao e remocao de dominio novo
 
-Verificar se é possivel criar o dominio do usuario.
+Verificar se é possivel criar e logo apos remover o dominio do usuario.
 
 ### Criar dominio usando API REST
 
@@ -122,7 +122,7 @@ Verificar se é possivel renomear um dominio.
 ### Verificar account 'update-dom'
 ### Voltar o nome anterior do dominio
 
-## 2.3 Remocao de dominio vazio
+## 2.3 Remocao de dominio esvasiado
 
 Verificar se é possivel remover um dominio sem aplicacões.
 

@@ -93,7 +93,10 @@ def delete_domain(name, force=False, error=True):
 	'''Remove um dominio. Se {error}=True, falha se nao conseguir
 	remover, retornando True ou False.
 	'''
-	openshift.broker.rest.domains(name).DELETE(data={'force': str(force).lower()})
+	response = openshift.broker.rest.domains(name).DELETE(data={'force': str(force).lower()})
+	if error:
+		assert response.ok, 'Error deleting domain {name}: {response.status_code} {response.reason}:\n{response.text}'.format(**locals())
+	return response.json if response.ok else False
 
 #
 # Operacoes de aplicacao
@@ -121,7 +124,10 @@ def delete_app(name, domain, error=True):
 		nao existir ou ocorrer um error na operacao, retornando
 		True ou False neste caso.
 	'''
-	raise NotImplementedError()
+	response = openshift.broker.rest.domains(domain).applications(name).DELETE()
+	if error:
+		assert response.ok, 'Error deleting app {name}: {response.status_code} {response.reason}:\n{response.text}'.format(**locals())
+	return response.json if response.ok else False
 
 #
 # Operacoes de projeto
@@ -256,11 +262,11 @@ def add_user_key(title, public_key_file):
 # Operacoes de url
 #
 
-def get_url(url):
-	return requests.get(url)
+def get_url(url, **kva):
+	return requests.get(url, verify=False, **kva)
 
-def get_url_status(url):
-	return get_url(url).status_code
+def get_url_status(url, **kva):
+	return get_url(url, **kva).status_code
 
 #
 # Operacoes de accouting
@@ -324,35 +330,37 @@ def scoped_domain(request):
 		def __init__(self):
 			self.name = ''.join(random.sample('abcdefghijklmnopqrwstuvwxyz', 8))
 			self.domain = None
+			self.deleted = False
+
 		def create(self):
 			self.domain = create_domain(self.name)
+			return self.domain
+
 		def delete(self):
-			return delete_domain(self.name, force=True)
+			return True if self.deleted else delete_domain(self.name, force=True)
+
 		def __getitem__(self, name):
 			return self.domain[name]
+
 		def __getattr__(self, name):
 			try:
 				return self['data'][name]
 			except:
 				raise AttributeError('\'{klass}\' object has no attribute \'{name}\''.format(klass=self.__class__.__name__, name=name))
+
 	sd = ScopedDomain()
-	print '***', sd.create()
+	sd.create()
 	request.addfinalizer(sd.delete)
 	return sd
 
-#@pytest.fixture                    # pylint: disable=E1101
-#def domain(request, scoped_domain):
-#	print '***', scoped_domain.create()
-#	request.addfinalizer(scoped_domain.delete)
-
 class TestDomain:                  # pylint: disable=E1101
-	def test_create_domain(self):
-		'''2.1. Criacao de dominio
+	def test_create_remove_new_domain(self):
+		'''2.1. Criacao e remocao de dominio novo
 		'''
 		name = ''.join(random.sample('abcdefghijklmnopqrwstuvwxyz', 8))
 		assert not get_domain(name, error=False)
 		try:
-			print '+++', create_domain(name)
+			create_domain(name)
 			get_domain(name)
 		finally:
 			delete_domain(name)
@@ -366,41 +374,42 @@ class TestDomain:                  # pylint: disable=E1101
 		try:
 			update_domain(scoped_domain.id, new_domain)
 			update = True
-			assert last_accounted('update-dom')
-			assert get_domain(new_domain)
+			last_accounted('update-dom')
+			get_domain(new_domain)
 		finally:
 			if update:
 				update_domain(new_domain, scoped_domain['data']['id'])
 
 	@pytest.mark.usefixtures('scoped_domain')
-	def test_remove_empty_domain(self, scoped_domain):
-		'''2.3 Remocao de dominio vazio
+	def test_remove_emptied_domain(self, scoped_domain):
+		'''2.3 Remocao de dominio esvasiado
 		'''
 		domain_id = scoped_domain['data']['id']
 		create_app(APP, domain_id, CART_PHP)
-		assert last_accounted('create-app')
+		last_accounted('create-app')
 		assert not delete_domain(domain_id, force=False, error=False)
 		delete_app(APP, domain_id)
-		assert last_accounted('delete-app')
+		last_accounted('delete-app')
 		delete_domain(domain_id, force=False)
-		assert last_accounted('delete-dom')
-		assert get_url_status(scoped_domain['data']['links']['GET']['href']) == 404
+		scoped_domain.deleted = True
+		last_accounted('delete-dom')
+		assert get_url_status(scoped_domain['data']['links']['GET']['href'], auth=(USER_EMAIL, USER_TOKEN)) == 404
 
 	def test_remove_busy_domain(self):
 		'''2.4 Remocao de dominio ocupado
 		'''
 		if get_domain(DOMAIN, error=False):
 			delete_domain(DOMAIN, force=True, error=False)
-			assert last_accounted('delete-dom')
+			last_accounted('delete-dom')
 		dom = create_domain(DOMAIN)
-		assert last_accounted('create-dom')
+		last_accounted('create-dom')
 		create_app(APP, DOMAIN, CART_PHP)
-		assert last_accounted('create-app')
+		last_accounted('create-app')
 		assert not delete_domain(DOMAIN, force=False, error=False)
-		assert last_accounted('delete-dom')
-		assert delete_domain(DOMAIN, force=True)
-		assert last_accounted('delete-dom')
-		assert get_url_status(dom['data']['links']['GET']['href']) == 404
+		last_accounted('delete-dom')
+		delete_domain(DOMAIN, force=True)
+		last_accounted('delete-dom')
+		assert get_url_status(dom['data']['links']['GET']['href'], auth=(USER_EMAIL, USER_TOKEN)) == 404
 
 #
 # 3. Gerenciamento de aplicacao
@@ -411,7 +420,7 @@ def test_create_app_simple_prod():
 	'''
 	create_domain(DOMAIN)
 	app = create_app(APP, DOMAIN, CART_PHP)
-	assert last_accounted('create-app')
+	last_accounted('create-app')
 	clone_project(PROJECT, KEY_RSA)
 	add_file_to_project(PROJECT, 'php/new-file.txt', 'hello world')
 	push_project(PROJECT, KEY_RSA)
