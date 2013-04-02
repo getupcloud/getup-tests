@@ -324,7 +324,7 @@ volta automaticamente a quantidade inicial de gears.
 ### Verificar quantidade de gears atual
 ### Verificar account 'scale-down' * N
 
-## 4.1 Escalar aplicacao composta manualmente
+## 4.3 Escalar aplicacao composta manualmente
 
 Verificar se a aplataforma consegue escalar uma aplicacao composta a partir da solicitacao do usuario.
 
@@ -342,7 +342,7 @@ Verificar se a aplataforma consegue escalar uma aplicacao composta a partir da s
 ### Verificar account 'scale-down' * N
 ### Verificar quantidade de gears atual
 
-## 4.2 Escalar aplicacao composta automaticamente
+## 4.4 Escalar aplicacao composta automaticamente
 
 Verificar se a plataforma consegue escalar automaticamente uma aplicacao composta.
 O teste consiste em criar uma aplicacao composta escalavel, disparar quantidade suficiente de

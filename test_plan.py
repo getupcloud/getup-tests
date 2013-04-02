@@ -32,18 +32,18 @@ ADMIN_TOKEN = os.environ['ADMIN_TOKEN']
 
 USER_EMAIL  = 'getuptest.{}@getupcloud.com'.format(os.getpid())
 USER_PASS   = ''.join(random.sample('abcdefghijkl0123456789', 10))
-
 USER_TOKEN  = '' # read after creation
-KEY_RSA     = None
-KEY_DSA     = None
+
+PRJ         = 'tstprj'
 APP         = 'tstapp'
 DOMAIN      = 'testdom{}'.format(os.getpid())
 PROJECT     = '{app}-{domain}'
 GIT_URL     = 'git@git.getupcloud.com:{project_name}.git'
 GIT_DIR     = '{project_name}.git'
-DATA_DIR    = os.path.abspath('data-dir')
+DATA_DIR    = os.path.abspath('data-dir-%i' % os.getpid())
 
 CART_PHP    = 'php-5.3'
+CART_MYSQL  = 'mysql-5.1'
 REPO_WORDPRESS = 'https://github.com/openshift/wordpress-example'
 
 gitlab      = Hammock(GITLAB, verify=False)
@@ -54,13 +54,15 @@ def setup_module():
 		shutil.rmtree(DATA_DIR)
 	os.mkdir(DATA_DIR)
 
-	global KEY_RSA, KEY_DSA
-	KEY_RSA = create_rsa_key()
-	KEY_DSA = create_dsa_key()
-
-
 def teardown_module():
 	pass
+
+def test_pass():
+	pass
+
+@pytest.mark.xfail # pylint: disable=E1101
+def test_fail():
+	raise Exception('always fails')
 
 #
 # Operacoes de dominio
@@ -121,18 +123,22 @@ def create_app(name, domain, carts, scale=False, initial_git_url=None):
 		name = '{prefix}{suffix}'.format(prefix=APP, suffix=''.join(random.sample('abcdefghijkl0123456789', 4)))
 
 	try: domain = domain.id
-	except AttributeError: domain = domain['data']['id']
-	except (KeyError, TypeError): pass
+	except AttributeError:
+		try: domain = domain['data']['id']
+		except (KeyError, TypeError): pass
 
+	headers = {}
 	data = { 'name': name, 'scale': scale }
-	if isinstance(carts, (list, tuple)):
-		data['cartridges'] = carts
-	else:
-		data['cartridge'] = carts
 	if initial_git_url:
 		data['initial_git_url'] = initial_git_url
+	if isinstance(carts, (list, tuple)):
+		data['cartridges'] = carts
+		headers['Content-Type'] = 'application/json'
+		data = json.dumps(data)
+	else:
+		data['cartridge'] = carts
 
-	app = openshift.broker.rest.domains(domain).applications.POST(data=data)
+	app = openshift.broker.rest.domains(domain).applications.POST(data=data, headers=headers)
 	assert app.ok, 'Erro creating app {name}: {app.status_code} {app.reason}:\n{app.text}'.format(**locals())
 	return app.json
 
@@ -150,8 +156,9 @@ def delete_app(name, domain, error=True):
 	except (KeyError, TypeError): pass
 
 	try: domain = domain.id
-	except AttributeError: domain = domain['data']['id']
-	except (KeyError, TypeError): pass
+	except AttributeError:
+		try: domain = domain['data']['id']
+		except (KeyError, TypeError): pass
 
 	response = openshift.broker.rest.domains(domain).applications(name).DELETE()
 	if error:
@@ -162,17 +169,17 @@ def delete_app(name, domain, error=True):
 # Operacoes de projeto
 #
 
-def create_project(name):
+def create_project(user, name):
 	'''Cria projeto no gitlab.
 	'''
 	data = json.dumps({'name': name})
 	headers = {'Content-Type': 'application/json'}
-	params = {'private_token': USER_TOKEN}
+	params = {'private_token': user['private_token']}
 	project = gitlab.api.v2.projects.POST(data=data, headers=headers, params=params)
 	assert project.ok, 'Error creating project: data={data}, status_code={project.status_code}, response={project.content}'.format(data=data, project=project)
 	return project.json
 
-def git(args, repo_dir='.', priv_key=None):
+def git(args, repo_dir=None, priv_key=None):
 	assert isinstance(args, (list, tuple))
 	assert os.path.isdir(repo_dir)
 	if priv_key is not None:
@@ -183,12 +190,12 @@ def git(args, repo_dir='.', priv_key=None):
 	command = ['git'] + list(args)
 	assert subprocess.call(command, cwd=repo_dir, env={'GIT_SSH': git_ssh, 'PRIV_KEY': priv_key or ''}) == 0
 
-def clone_project(project_name, priv_key):
+def clone_project(user, project_name):
 	'''Clona projeto do gitlab.
 	'''
 	git_url = GIT_URL.format(project_name=project_name)
 	repo_dir = os.path.join(DATA_DIR, GIT_DIR.format(project_name=project_name))
-	git(['clone', git_url, repo_dir], priv_key=priv_key)
+	git(['clone', git_url, repo_dir], '.', priv_key=user['key']['rsa'])
 	assert os.path.isdir(repo_dir) and os.path.isdir(os.path.join(repo_dir, '.git'))
 
 def add_file_to_project(project_name, filename, content=None):
@@ -204,11 +211,26 @@ def add_file_to_project(project_name, filename, content=None):
 	log_mesg = '{mesg}: {filename}'.format(mesg='create' if is_new else 'updated', filename=filename)
 	git(['commit', '-m', log_mesg, filename], repo_dir=repo_dir)
 
-def push_project(project_name, priv_key):
+def push_project(user, project_name):
 	'''Execute git push no projeto
 	'''
 	repo_dir = os.path.join(DATA_DIR, GIT_DIR.format(project_name=project_name))
-	git(['push', 'origin', 'master'], repo_dir=repo_dir, priv_key=priv_key)
+	git(['push', 'origin', 'master'], repo_dir=repo_dir, priv_key=user['key']['dsa'])
+
+def push_project_new_file(user, app, domain, name, content=''):
+	assert user['key']
+	try: app = app['data']['name']
+	except (KeyError, TypeError): pass
+
+	try: domain = domain.id
+	except AttributeError:
+		try: domain = domain['data']['id']
+		except (KeyError, TypeError): pass
+
+	project = PROJECT.format(app=app, domain=domain)
+	clone_project(user, project)
+	add_file_to_project(project, name, content)
+	push_project(user, project)
 
 #
 # Operacoes de usuario
@@ -243,16 +265,6 @@ def login_user(email, password):
 	r = b.submit() # pylint: disable=E1102
 	assert r.geturl().rstrip('/') == GITLAB.rstrip('/')
 
-def get_user_token(email, password):
-	'''Busca private_token do usuario.
-	'''
-	data = json.dumps({'email': email, 'password': password})
-	headers = {'Content-Type:': 'application/json'}
-	session = gitlab.api.v2.session.POST(data=data, headers=headers)
-	assert session.ok
-	assert 'private_token' in session.json, 'Session token not found (invalid user or password?)'
-	return session.json['private_token']
-
 def create_ssh_key(key_type):
 	'''Cria par de chaves ssh-{key_type} e retorna tupla (private, public).
 	'''
@@ -277,15 +289,48 @@ def create_dsa_key():
 	'''
 	return create_ssh_key('dsa')
 
-def add_user_key(title, public_key_file):
+def add_user_key(user, title, key_file):
 	'''Insere chave publica na conta do usuario
 	'''
-	with open(public_key_file) as key:
+	if isinstance(key_file, (list, tuple)):
+		key_file = key_file[1]
+
+	with open(key_file) as key:
 		data = json.dumps({'title': title, 'key': key.read()})
 		headers = {'Content-Type:': 'application/json'}
-		params = {'private_token': USER_TOKEN}
+		params = {'private_token': user['private_token']}
 		session = gitlab.api.v2.user.keys.POST(data=data, headers=headers, params=params)
 		assert session.ok
+
+@pytest.fixture(scope='module') # pylint: disable=E1101
+def user():
+	'''Cria usuario no gitlab com chaves ssh rsa+dsa registradas e
+		'private_token'. Inicializa objeto de acesso ao openshift.
+	'''
+	# cria usuario
+	user = create_user(name='Getup Cloud Test User {}'.format(os.getpid()), email=USER_EMAIL, password=USER_PASS)
+
+	# busca private_token
+	data = json.dumps({'email': user['email'], 'password': USER_PASS})
+	headers = {'Content-Type:': 'application/json'}
+	session = gitlab.api.v2.session.POST(data=data, headers=headers)
+	assert session.ok
+	assert 'private_token' in session.json, 'Session token not found (invalid user or password?)'
+	user['private_token'] = session.json['private_token']
+
+	# registra chaves ssh do usuario
+	user['key'] = {
+		'rsa': create_rsa_key(),
+		'dsa': create_dsa_key(),
+	}
+	add_user_key(user, 'rsa-key', user['key']['rsa'])
+	add_user_key(user, 'dsa-key', user['key']['dsa'])
+
+	# inicializa objeto openshift
+	global openshift
+	openshift = Hammock(BROKER, auth=(user['email'], user['private_token']), verify=False)
+
+	return user
 
 #
 # Operacoes de url
@@ -308,12 +353,12 @@ def check_app_url_status(url, status_code=None, content=None, **kva):
 	try: url = url['data']['app_url']
 	except (KeyError, TypeError): pass
 
-	for retry in range(12):
+	for retry in range(10):
 		response = get_url(url, **kva)
 
 		if response.status_code == 503:
-			# Service Unavailable (app subindo ou reiniciando)
-			time.sleep(5)
+			print '{url}: {response.status_code} {response.reason} (retry: {retry}/10)'.format(**locals())
+			time.sleep(6)
 			continue
 
 		if status_code:
@@ -337,31 +382,22 @@ def last_accounted(last_entry):
 # 1. Testes de usuario
 #
 
-class TestUsers:
-	def test_create_user(self):
-		'''1.1 Criacao de usuario
-		'''
-		create_user(name='Getup Cloud Test User {}'.format(os.getpid()), email=USER_EMAIL, password=USER_PASS)
-		login_user(email=USER_EMAIL, password=USER_PASS)
+@pytest.mark.usefixtures('user') # pylint: disable=E1101
+def test_user_login(user):
+	'''1.1 Usario consegue logar no gitlab
+	'''
+	login_user(email=user['email'], password=USER_PASS)
 
-	def test_user_auth_token(self):
-		'''1.2 Autenticacao de usuario
-		'''
-		global USER_TOKEN, openshift
-		USER_TOKEN = get_user_token(email=USER_EMAIL, password=USER_PASS)
-		# atualiza objeto openshift com dados de autenticacao
-		openshift = Hammock(BROKER, auth=(USER_EMAIL, USER_TOKEN), verify=False)
-
-	def test_user_pub_key(self):
+@pytest.mark.usefixtures('user') # pylint: disable=E1101
+class TestUser:
+	def test_user_project(self, user):
 		'''1.3 Gerenciamento de chave ssh
 		'''
-		add_user_key('rsa-key', KEY_RSA[1])
-		add_user_key('dsa-key', KEY_DSA[1])
-		project_name = 'testuserpubkey-{}'.format(os.getpid())
-		create_project(project_name)
-		clone_project(project_name, KEY_DSA)
-		add_file_to_project(project_name, 'README', 'hello world')
-		push_project(project_name, KEY_RSA)
+		prefix = PRJ
+		suffix = ''.join(random.sample('abcdefghijkl0123456789', 8))
+		project_name = '{prefix}-{suffix}'.format(prefix=prefix, suffix=suffix)
+		create_project(user, project_name)
+		push_project_new_file(user, prefix, suffix, 'README', 'hello world')
 
 class TestBroker:
 	def test_api_accessible(self):
@@ -374,6 +410,7 @@ class TestBroker:
 #
 # 2. Testes de domino
 #
+
 @pytest.fixture                    # pylint: disable=E1101
 def scoped_domain(request):
 	'''Cria um dominio exclusivo para o teste.
@@ -408,8 +445,9 @@ def scoped_domain(request):
 	request.addfinalizer(sd.delete)
 	return sd
 
+@pytest.mark.usefixtures('user') # pylint: disable=E1101
 class TestDomain:
-	def test_create_remove_new_domain(self):
+	def test_create_remove_new_domain(self, user):
 		'''2.1. Criacao e remocao de dominio novo
 		'''
 		name = ''.join(random.sample('abcdefghijklmnopqrwstuvwxyz', 8))
@@ -421,10 +459,10 @@ class TestDomain:
 			delete_domain(name)
 
 	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
-	def test_update_domain(self, scoped_domain):
+	def test_update_domain(self, user, scoped_domain):
 		'''2.2. Alteracao de dominio
 		'''
-		new_domain =  scoped_domain.id[1:-1]
+		new_domain = scoped_domain.id[1:-1]
 		update = False
 		try:
 			update_domain(scoped_domain.id, new_domain)
@@ -436,68 +474,71 @@ class TestDomain:
 				update_domain(new_domain, scoped_domain['data']['id'])
 
 	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
-	def test_remove_emptied_domain(self, scoped_domain):
+	def test_remove_emptied_domain(self, user, scoped_domain):
 		'''2.3 Remocao de dominio esvasiado
 		'''
 		app = create_app(None, scoped_domain, CART_PHP)
 		last_accounted('create-app')
 		assert not delete_domain(scoped_domain, force=False, error=False)
-		delete_app(app['data']['name'], scoped_domain)
+		delete_app(app, scoped_domain)
 		last_accounted('delete-app')
 		delete_domain(scoped_domain, force=False)
 		scoped_domain.deleted = True
 		last_accounted('delete-dom')
-		assert get_url_status(scoped_domain.links['GET']['href'], auth=(USER_EMAIL, USER_TOKEN)) == 404
+		assert get_url_status(scoped_domain.links['GET']['href'], auth=(user['email'], user['private_token'])) == 404
 
 	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
-	def test_remove_busy_domain(self, scoped_domain):
+	def test_remove_busy_domain(self, user, scoped_domain):
 		'''2.4 Remocao de dominio ocupado
 		'''
 		create_app(None, scoped_domain, CART_PHP)
 		last_accounted('create-app')
 		assert not delete_domain(scoped_domain, force=False, error=False)
 		delete_domain(scoped_domain, force=True)
-		last_accounted('delete-dom')
 		scoped_domain.deleted = True
-		assert get_url_status(scoped_domain.links['GET']['href'], auth=(USER_EMAIL, USER_TOKEN)) == 404
+		last_accounted('delete-dom')
+		assert get_url_status(scoped_domain.links['GET']['href'], auth=(user['email'], user['private_token'])) == 404
 
 #
 # 3. Gerenciamento de aplicacao
 #
 
+@pytest.mark.usefixtures('user', 'scoped_domain') # pylint: disable=E1101
 class TestApp:
-	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
-	def test_create_app_simple_prod(self, scoped_domain):
+	def test_create_app_simple_prod(self, user, scoped_domain):
 		'''3.1 Criacao de aplicacao simples (producao)
 		'''
 		app = create_app(None, scoped_domain, CART_PHP)
 		last_accounted('create-app')
-		project = PROJECT.format(app=app['data']['name'], domain=scoped_domain.id)
-		clone_project(project, KEY_RSA)
-		add_file_to_project(project, 'php/new-file.txt', 'hello world')
-		push_project(project, KEY_RSA)
+		push_project_new_file(user, app, scoped_domain, 'php/new-file.txt', 'hello world')
 		check_app_url_status(app['data']['app_url'] + '/new-file.txt', status_code=200, content='hello world')
 
-	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
-	def test_remove_app_prod(self, scoped_domain):
+	def test_remove_app_prod(self, user, scoped_domain):
 		'''3.2 Remocao de aplicacao (producao)
 		'''
-		app = create_app(None, scoped_domain, CART_PHP)
+		app = create_app(name=None, domain=scoped_domain, carts=CART_PHP)
 		last_accounted('create-app')
 		check_app_url_status(app, status_code=200)
 		delete_app(app, scoped_domain)
 		last_accounted('delete-app')
 		try:
-			check_app_url_status(app, status_code=200)
+			check_app_url_status(app)
 			assert not 'Aplicacao foi removida mas continua respondendo.'
-		except AssertionError:
+		except (AssertionError, requests.ConnectionError):
 			pass
 
-	@pytest.mark.usefixtures('scoped_domain') # pylint: disable=E1101
-	def test_create_app_simple_prod_init_repo(self, scoped_domain):
+	def test_create_app_simple_prod_init_repo(self, user, scoped_domain):
 		'''3.3 Criacao de aplicacao simples com repositorio inicial (producao)
 		'''
 		app = create_app(name=None, domain=scoped_domain, carts=CART_PHP, initial_git_url=REPO_WORDPRESS)
 		last_accounted('create-app')
 		check_app_url_status(app['data']['app_url'].rstrip('/') + '/wp-config.php')
+
+	def test_create_app_geared_prod(self, user, scoped_domain):
+		'''3.4 Criacao de aplicacao composta (producao)
+		'''
+		app = create_app(name=None, domain=scoped_domain, carts=[CART_PHP, CART_MYSQL])
+		last_accounted('create-app')
+		check_app_url_status(app['data']['app_url'].rstrip('/') + '/')
+		push_project_new_file(user, app, scoped_domain, 'php/db_name.php', '<?php echo DB_NAME;')
 
